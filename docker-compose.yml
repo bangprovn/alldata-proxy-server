@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  # PostgreSQL for auth server
+  auth-db:
+    image: postgres:15-alpine
+    container_name: alldata-auth-db
+    environment:
+      POSTGRES_DB: alldata_auth
+      POSTGRES_USER: auth_user
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-auth_secret_password}
+    volumes:
+      - auth_db_data:/var/lib/postgresql/data
+      - ./auth-server/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U auth_user -d alldata_auth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - alldata-network
+
+  # Auth server
+  auth-server:
+    build: ./auth-server
+    container_name: alldata-auth-server
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DB_HOST=auth-db
+      - DB_PORT=5432
+      - DB_NAME=alldata_auth
+      - DB_USER=auth_user
+      - DB_PASSWORD=${AUTH_DB_PASSWORD:-auth_secret_password}
+      - JWT_SECRET=${JWT_SECRET:-your_jwt_secret_key_change_this}
+      - JWT_ISSUER=alldata-auth-server
+    depends_on:
+      auth-db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - alldata-network
+
+  # Proxy server
+  alldata-proxy:
+    build: .
+    container_name: alldata-proxy-server
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - AUTH_SERVER_URL=http://auth-server:3001
+      - JWT_SECRET=${JWT_SECRET:-your_jwt_secret_key_change_this}
+      - JWT_ISSUER=alldata-auth-server
+      - ALLDATA_EMAIL=${ALLDATA_EMAIL}
+      - ALLDATA_PASSWORD=${ALLDATA_PASSWORD}
+    volumes:
+      # Persist cache directory
+      - cache_data:/app/cache
+      # Persist public/app-alldata/alldata directory
+      - public_app_alldata:/app/public/app-alldata/alldata
+    depends_on:
+      auth-server:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - alldata-network
+
+volumes:
+  auth_db_data:
+    driver: local
+  cache_data:
+    driver: local
+  public_app_alldata:
+    driver: local
+
+networks:
+  alldata-network:
+    driver: bridge
