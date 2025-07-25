@@ -5,7 +5,6 @@ import { authManager } from '../middleware/auth.js';
 import { config } from '../config/index.js';
 
 const STATIC_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'pdf', 'html', 'css', 'js', 'woff', 'woff2', 'ttf', 'eot', 'otf', 'ico'];
-const FONT_EXTENSIONS = ['woff', 'woff2', 'ttf', 'eot', 'otf'];
 
 const CONTENT_TYPES = {
   'png': 'image/png',
@@ -30,7 +29,7 @@ export function isStaticAsset(path) {
   if (/\.[a-zA-Z0-9]+$/.test(path)) {
     return true;
   }
-  
+
   // Check for underscore pattern with common asset extensions
   const underscorePattern = new RegExp(`_(${STATIC_EXTENSIONS.join('|')})$`, 'i');
   return underscorePattern.test(path);
@@ -47,13 +46,13 @@ export function getContentType(filePath) {
 
 export async function downloadAsset(url, filePath) {
   const dir = path.dirname(filePath);
-  
+
   if (!fs.existsSync(dir)) {
     await fs.promises.mkdir(dir, { recursive: true });
   }
 
   const accessToken = await authManager.getValidToken();
-  
+
   const response = await axios({
     method: 'GET',
     url: `${config.proxy.target}${url}`,
@@ -72,7 +71,7 @@ export async function downloadAsset(url, filePath) {
 
   const writer = fs.createWriteStream(filePath);
   response.data.pipe(writer);
-  
+
   return new Promise((resolve, reject) => {
     writer.on('finish', resolve);
     writer.on('error', reject);
@@ -81,12 +80,21 @@ export async function downloadAsset(url, filePath) {
 
 export function normalizeAssetPath(requestPath) {
   const pathWithoutQuery = requestPath.split('?')[0];
-  
+
+  // Handle HTML article routes (e.g., /articles/..._html/type/text/html)
+  if (pathWithoutQuery.includes('/articles/') && pathWithoutQuery.includes('_html') && pathWithoutQuery.includes('/type/text/html')) {
+    // Extract the article path and convert _html to .html
+    const articleMatch = pathWithoutQuery.match(/(.+_html)/);
+    if (articleMatch) {
+      return articleMatch[1].replace(/_html$/, '.html');
+    }
+  }
+
   // Handle underscore pattern files
   const underscoreMatch = pathWithoutQuery.match(/_([a-zA-Z0-9]+)$/);
   if (underscoreMatch) {
     return pathWithoutQuery.replace(/_([a-zA-Z0-9]+)$/, '.$1');
   }
-  
+
   return pathWithoutQuery;
 }

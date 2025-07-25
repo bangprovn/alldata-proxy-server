@@ -8,20 +8,23 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies
-RUN npm ci --only=production
+RUN npm ci --omit=dev
+
+# Create non-root user first
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
 
 # Copy application code
-COPY . .
+COPY --chown=nodejs:nodejs . .
 
-# Create directories for persistent data
-RUN mkdir -p cache public/app-alldata/alldata
+# Create directories for persistent data with correct ownership
+RUN mkdir -p cache public/app-alldata/alldata && \
+    chown -R nodejs:nodejs cache public
 
 # Expose the application port
 EXPOSE 3000
 
-# Run as non-root user for security
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
+# Switch to non-root user
 USER nodejs
 
 # Start the application

@@ -2,6 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="https://data-eu.partnership.workshopdiag.com/favicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="user_email" content="Profile" />
     <title>AllDATA EU - Workshopdiag</title>
@@ -21,7 +22,6 @@ setInterval(checkHeaderRight, 1000);
     <meta name="robots" content="noindex">
     <meta name="googlebot" content="noindex">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/ZH/XLlvWZOJyj7Yy7tcenmpD1ypASozpmT/E0iPtmFIB46ZmdtAc9eNBvH0H/ZpiBw==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-    <script src="/assets/auto-token-handler.js"></script>
     <script type="module" crossorigin src="/assets/index-c6acb897.js"></script>
     <link rel="stylesheet" href="/assets/index-6c3ca6fa.css">
   </head>

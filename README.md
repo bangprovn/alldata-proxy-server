@@ -178,11 +178,42 @@ GET /api/users/activity
 Authorization: Bearer TOKEN
 ```
 
+## Token Management
+
+### Refresh Token Flow
+The auth server implements a secure token rotation mechanism:
+
+1. **Login** returns both access token (15min) and refresh token (7 days)
+2. **Access token expires** → Use refresh token to get new tokens
+3. **Old refresh token is revoked** → New tokens are issued
+4. **Automatic handling** → See examples in `auth-server/examples/`
+
+```bash
+# Refresh tokens when access token expires
+POST /api/auth/refresh
+{
+  "refreshToken": "your_refresh_token"
+}
+```
+
+### Token Refresh Demo
+```bash
+cd auth-server/examples
+npm install
+npm run demo
+```
+
+This demonstrates:
+- Automatic token refresh on 401 errors
+- Token expiration handling
+- Secure token storage patterns
+
 ## Security
 
 - Passwords are hashed with bcrypt
 - JWT tokens expire in 15 minutes (configurable)
 - Refresh tokens expire in 7 days
+- Token rotation on each refresh (old tokens revoked)
 - Rate limiting on authentication endpoints
 - Audit logging for all auth events
 - Request limits based on license type

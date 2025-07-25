@@ -11,13 +11,37 @@ const CACHE_TTL = 60 * 1000; // 1 minute
 const getAuthServerUrl = () => config.authServer?.url || process.env.AUTH_SERVER_URL || 'http://localhost:3001';
 
 export const validateJWT = async (req, res, next) => {
+  // Check for token in multiple places matching React app behavior
+  let token = null;
+
+  // 1. Check Authorization header (Bearer token)
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  }
+
+  // 2. Check accessToken header (as used by React app)
+  if (!token && req.headers['accesstoken']) {
+    token = req.headers['accesstoken'];
+  }
+
+  // 3. Check cookies
+  if (!token && req.headers.cookie) {
+    const cookies = req.headers.cookie.split(';');
+    for (const cookie of cookies) {
+      const [name, value] = cookie.trim().split('=');
+      if (name === 'accessToken') {
+        token = value;
+        break;
+      }
+    }
+  }
 
   if (!token) {
-    return res.status(401).json({ 
+    return res.status(400).json({
       error: 'Access token required',
-      code: 'NO_TOKEN'
+      code: 'NO_TOKEN',
+      msg_code: 'NO_TOKEN'
     });
   }
 
@@ -37,7 +61,7 @@ export const validateJWT = async (req, res, next) => {
     });
 
     if (!response.data.valid) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: response.data.error || 'Invalid token',
         code: 'INVALID_TOKEN'
       });
@@ -62,9 +86,9 @@ export const validateJWT = async (req, res, next) => {
     req.user = response.data.user;
     next();
   } catch (error) {
-    logger.error('JWT validation error', { 
+    logger.error('JWT validation error', {
       error: error.message,
-      authServerUrl: getAuthServerUrl() 
+      authServerUrl: getAuthServerUrl()
     });
 
     // If auth server is down, try local validation as fallback
@@ -91,19 +115,19 @@ export const validateJWT = async (req, res, next) => {
         });
 
         next();
-      } catch (fallbackError) {
-        return res.status(401).json({ 
+      } catch {
+        return res.status(401).json({
           error: 'Authentication failed',
           code: 'AUTH_FAILED'
         });
       }
     } else if (error.response?.status === 429) {
-      return res.status(429).json({ 
+      return res.status(429).json({
         error: 'Request limit exceeded',
         code: 'RATE_LIMIT_EXCEEDED'
       });
     } else {
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: 'Authentication failed',
         code: 'AUTH_FAILED'
       });
@@ -115,7 +139,7 @@ export const validateAPIKey = async (req, res, next) => {
   const apiKey = req.headers['x-api-key'] || req.query.apiKey;
 
   if (!apiKey) {
-    return res.status(401).json({ 
+    return res.status(401).json({
       error: 'API key required',
       code: 'NO_API_KEY'
     });
@@ -130,7 +154,7 @@ export const validateAPIKey = async (req, res, next) => {
     });
 
     if (!response.data.valid) {
-      return res.status(401).json({ 
+      return res.status(401).json({
         error: response.data.error || 'Invalid API key',
         code: 'INVALID_API_KEY'
       });
@@ -142,13 +166,13 @@ export const validateAPIKey = async (req, res, next) => {
     logger.error('API key validation error', { error: error.message });
 
     if (error.response?.status === 429) {
-      return res.status(429).json({ 
+      return res.status(429).json({
         error: 'Request limit exceeded',
         code: 'RATE_LIMIT_EXCEEDED'
       });
     }
 
-    return res.status(401).json({ 
+    return res.status(401).json({
       error: 'Authentication failed',
       code: 'AUTH_FAILED'
     });
@@ -158,16 +182,19 @@ export const validateAPIKey = async (req, res, next) => {
 // Middleware to use either JWT or API key
 export const authenticate = async (req, res, next) => {
   const hasAuthHeader = req.headers['authorization'];
+  const hasAccessToken = req.headers['accesstoken'];
   const hasApiKey = req.headers['x-api-key'] || req.query.apiKey;
+  const hasCookieToken = req.headers.cookie && req.headers.cookie.includes('accessToken=');
 
-  if (hasAuthHeader) {
+  if (hasAuthHeader || hasAccessToken || hasCookieToken) {
     return validateJWT(req, res, next);
   } else if (hasApiKey) {
     return validateAPIKey(req, res, next);
   } else {
-    return res.status(401).json({ 
+    return res.status(400).json({
       error: 'Authentication required',
-      code: 'NO_AUTH'
+      code: 'NO_AUTH',
+      msg_code: 'NO_TOKEN'
     });
   }
 };

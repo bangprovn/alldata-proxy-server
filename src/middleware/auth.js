@@ -10,9 +10,9 @@ export async function authMiddleware(req, res, next) {
     next();
   } catch (error) {
     console.error('Authentication error:', error);
-    res.status(500).json({ 
-      error: 'Authentication failed', 
-      details: error.message 
+    res.status(500).json({
+      error: 'Authentication failed',
+      details: error.message
     });
   }
 }

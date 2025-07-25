@@ -7,7 +7,7 @@ import compression from 'compression';
 import helmet from 'helmet';
 
 import { config, validateConfig } from './config/index.js';
-import { authMiddleware } from './middleware/auth.js';
+import { authMiddleware, authManager } from './middleware/auth.js';
 import { authenticate } from './middleware/jwtAuth.js';
 import { cacheMiddleware } from './middleware/cache.js';
 import authRoutes from './routes/auth.js';
@@ -20,7 +20,9 @@ import {
   downloadAsset, 
   normalizeAssetPath 
 } from './utils/assets.js';
+import { replaceExternalLinks } from './utils/htmlProcessor.js';
 import logger from './utils/logger.js';
+import { handlePublicAssets, isPublicPath } from './middleware/publicAssets.js';
 
 // Validate configuration on startup
 try {
@@ -48,18 +50,17 @@ app.use(morgan('combined', {
 // CORS middleware
 app.use(cors({
   origin: true,
-  credentials: true
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'accessToken', 'web-from', 'x-api-key'],
+  exposedHeaders: ['accessToken']
 }));
 
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static files from public directory
-app.use(express.static(config.paths.public, {
-  maxAge: '1y',
-  etag: true
-}));
+// Serve static assets without authentication
+app.use(handlePublicAssets);
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -110,6 +111,16 @@ async function handleReactRoute(req, res) {
       html = html.replace(/src="\/assets\//g, 'src="/assets/');
       html = html.replace('href="https://data-eu.partnership.workshopdiag.com/favicon.png"', 'href="/favicon.png"');
       
+      // Inject auto-token-handler script before any other scripts
+      const tokenHandlerScript = '<script src="/assets/auto-token-handler.js"></script>';
+      if (html.includes('<head>')) {
+        // Inject after <head> tag to ensure it loads early
+        html = html.replace('<head>', `<head>\n${tokenHandlerScript}`);
+      } else if (html.includes('</body>')) {
+        // Fallback: inject before </body>
+        html = html.replace('</body>', `${tokenHandlerScript}\n</body>`);
+      }
+      
       // Handle hash-based routing
       if (req.originalUrl.includes('#')) {
         const hashPart = req.originalUrl.substring(req.originalUrl.indexOf('#'));
@@ -124,6 +135,9 @@ async function handleReactRoute(req, res) {
         `;
         html = html.replace('</body>', `${hashScript}</body>`);
       }
+      
+      // Replace external links
+      html = replaceExternalLinks(html);
       
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
@@ -145,7 +159,8 @@ async function handleStaticAsset(req, res) {
     
     // Check if file exists locally
     if (fs.existsSync(localPath)) {
-      logger.debug(`Serving cached static asset: ${localPath}`);
+      const userInfo = req.user ? `(user: ${req.user.email})` : '(public)';
+      logger.debug(`Serving cached static asset: ${localPath} ${userInfo}`);
       
       const contentType = getContentType(localPath);
       res.setHeader('Content-Type', contentType);
@@ -155,28 +170,158 @@ async function handleStaticAsset(req, res) {
         res.setHeader('Access-Control-Allow-Origin', '*');
       }
       
-      return res.sendFile(localPath);
+      // For HTML files, inject the auto-token-handler script
+      if (contentType === 'text/html') {
+        fs.readFile(localPath, 'utf8', (err, htmlContent) => {
+          if (err) {
+            logger.debug(`Failed to read file ${localPath}: ${err.message}`);
+            return res.status(404).send('Not Found');
+          }
+          
+          // Replace external links
+          htmlContent = replaceExternalLinks(htmlContent);
+          
+          // Inject auto-token-handler script
+          const tokenHandlerScript = '<script src="/assets/auto-token-handler.js"></script>';
+          if (htmlContent.includes('<head>')) {
+            htmlContent = htmlContent.replace('<head>', `<head>\n${tokenHandlerScript}`);
+          } else if (htmlContent.includes('</body>')) {
+            htmlContent = htmlContent.replace('</body>', `${tokenHandlerScript}\n</body>`);
+          }
+          
+          res.send(htmlContent);
+        });
+        return;
+      }
+      
+      return res.sendFile(localPath, (err) => {
+        if (err) {
+          logger.debug(`Failed to send file ${localPath}: ${err.message}`);
+          res.status(404).send('Not Found');
+        }
+      });
     }
     
-    // Download and save the asset
-    logger.info(`Downloading static asset: ${req.path}`);
+    // Asset doesn't exist locally, download from AllData with authentication
+    // Note: AllData requires authentication even for static assets like CSS/JS
+    logger.info(`Downloading static asset with auth: ${req.path}`);
     
-    await downloadAsset(req.originalUrl, localPath);
-    logger.info(`Successfully downloaded: ${localPath}`);
-    
-    const contentType = getContentType(localPath);
-    res.setHeader('Content-Type', contentType);
-    
-    if (isFontFile(localPath)) {
-      res.setHeader('Cache-Control', 'public, max-age=31536000');
-      res.setHeader('Access-Control-Allow-Origin', '*');
+    try {
+      // Get access token
+      const accessToken = await authManager.getValidToken();
+      
+      // Download with authentication
+      const response = await proxyService.makeRequest({
+        method: 'GET',
+        url: req.originalUrl,
+        headers: proxyService.buildHeaders(req, accessToken, false),
+        responseType: 'stream'
+      });
+      
+      logger.debug(`Response status for ${req.path}: ${response.status}`);
+      
+      // Handle 304 Not Modified - serve from cache if available
+      if (response.status === 304) {
+        logger.info(`Got 304 for ${req.path}, attempting to serve from cache`);
+        
+        // Check if we have it cached locally
+        if (fs.existsSync(localPath)) {
+          const contentType = getContentType(localPath);
+          res.setHeader('Content-Type', contentType);
+          res.setHeader('Cache-Control', 'public, max-age=3600');
+          
+          // For HTML files, inject the auto-token-handler script
+          if (contentType === 'text/html') {
+            fs.readFile(localPath, 'utf8', (err, htmlContent) => {
+              if (err) {
+                logger.error(`Failed to read cached file ${localPath}: ${err.message}`);
+                return res.status(500).send('Internal Server Error');
+              }
+              
+              // Inject auto-token-handler script
+              const tokenHandlerScript = '<script src="/assets/auto-token-handler.js"></script>';
+              if (htmlContent.includes('<head>')) {
+                htmlContent = htmlContent.replace('<head>', `<head>\n${tokenHandlerScript}`);
+              } else if (htmlContent.includes('</body>')) {
+                htmlContent = htmlContent.replace('</body>', `${tokenHandlerScript}\n</body>`);
+              }
+              
+              res.send(htmlContent);
+            });
+          } else {
+            res.sendFile(localPath);
+          }
+          return;
+        } else {
+          logger.warn(`Got 304 but no cached file for ${req.path}`);
+          return res.status(404).send('Not Found');
+        }
+      }
+      
+      if (response.status === 200) {
+        // Save the asset locally
+        const dir = path.dirname(localPath);
+        if (!fs.existsSync(dir)) {
+          await fs.promises.mkdir(dir, { recursive: true });
+        }
+        
+        const writer = fs.createWriteStream(localPath);
+        const { stream1, stream2 } = proxyService.createDuplicateStream(response.data);
+        
+        // Save to file
+        stream1.pipe(writer);
+        
+        writer.on('finish', () => {
+          logger.info(`Static asset saved locally: ${localPath}`);
+        });
+        
+        // Send to client
+        const contentType = getContentType(localPath);
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'public, max-age=3600');
+        
+        // For HTML files, inject the auto-token-handler script
+        if (contentType === 'text/html') {
+          let htmlContent = '';
+          stream2.on('data', chunk => {
+            htmlContent += chunk.toString();
+          });
+          
+          stream2.on('end', () => {
+            // Replace external links
+            htmlContent = replaceExternalLinks(htmlContent);
+            
+            // Inject auto-token-handler script
+            const tokenHandlerScript = '<script src="/assets/auto-token-handler.js"></script>';
+            if (htmlContent.includes('<head>')) {
+              htmlContent = htmlContent.replace('<head>', `<head>\n${tokenHandlerScript}`);
+            } else if (htmlContent.includes('</body>')) {
+              htmlContent = htmlContent.replace('</body>', `${tokenHandlerScript}\n</body>`);
+            }
+            
+            res.send(htmlContent);
+          });
+        } else {
+          stream2.pipe(res);
+        }
+        return;
+      } else {
+        logger.warn(`Failed to download static asset: ${req.path} (status: ${response.status})`);
+        
+        // Don't try to send response data for error statuses as it may contain circular references
+        return res.status(response.status).send('Not Found');
+      }
+    } catch (error) {
+      logger.error(`Error downloading static asset: ${req.path}`, {
+        error: error.message,
+        stack: error.stack,
+        url: req.originalUrl
+      });
+      return res.status(500).send('Failed to download asset');
     }
-    
-    res.sendFile(localPath);
   } catch (error) {
     logger.error(`Failed to handle static asset ${req.path}:`, error);
-    // Continue with proxy logic
-    return proxyRequest(req, res);
+    return res.status(500).send('Internal server error');
   }
 }
 
@@ -199,6 +344,14 @@ async function proxyRequest(req, res) {
     // Then get AllData access token for proxy
     await authMiddleware(req, res, () => {});
     if (!req.accessToken) return;
+
+    // Apply cache middleware after authentication
+    await new Promise((resolve) => {
+      cacheMiddleware(req, res, resolve);
+    });
+    
+    // If cache hit, response was already sent
+    if (res.headersSent) return;
 
     const isApiRequest = proxyService.isApiRequest(req);
     
@@ -287,22 +440,27 @@ async function proxyRequest(req, res) {
 }
 
 // Main request handler
-app.use(cacheMiddleware);
-
 app.use(async (req, res) => {
   // Skip API endpoints
   if (req.path.startsWith('/api/')) {
     return res.status(404).json({ error: 'API endpoint not found' });
   }
 
+  // Handle all static assets (now all are public without auth)
+  // This includes HTML files and files with underscore pattern like _html
+  if (isStaticAsset(req.path) || isPublicPath(req.path)) {
+    return handleStaticAsset(req, res);
+  }
+
+  // Handle HTML article routes (e.g., /vehicle/.../articles/..._html/type/text/html)
+  if (req.path.includes('/articles/') && req.path.includes('_html') && req.path.includes('/type/text/html')) {
+    logger.debug(`Handling HTML article route: ${req.path}`);
+    return handleStaticAsset(req, res);
+  }
+
   // Handle React routes
   if (req.path.match(/^\/alldata\/vehicle\/(home|search|details)/)) {
     return handleReactRoute(req, res);
-  }
-
-  // Handle static assets
-  if (isStaticAsset(req.path) && !req.path.includes('/fonts/')) {
-    return handleStaticAsset(req, res);
   }
 
   // Handle all other requests with proxy

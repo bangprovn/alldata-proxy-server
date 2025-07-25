@@ -52,8 +52,14 @@ class ProxyService {
       ...req.headers,
       'cookie': `accessToken=${accessToken}`,
       'origin': config.proxy.target,
-      'referer': `${config.proxy.target}/`
+      'referer': `${config.proxy.target}/`,
+      'accessToken': accessToken
     };
+
+    // Preserve web-from header if present
+    if (req.headers['web-from']) {
+      headers['web-from'] = req.headers['web-from'];
+    }
 
     // For API requests, also send access token in Authorization header
     if (isApiRequest) {
@@ -106,7 +112,7 @@ class ProxyService {
   }
 
   isApiRequest(req) {
-    return req.headers['content-type']?.includes('application/json') || 
+    return req.headers['content-type']?.includes('application/json') ||
            req.headers['accept']?.includes('application/json') ||
            req.originalUrl.includes('/api/') ||
            req.originalUrl.includes('/alldata/');

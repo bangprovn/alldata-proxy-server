@@ -7,18 +7,18 @@ const router = Router();
 router.post('/revalidate', async (req, res) => {
   try {
     const { path } = req.body;
-    
+
     if (!path) {
-      return res.status(400).json({ 
-        error: 'Path is required' 
+      return res.status(400).json({
+        error: 'Path is required'
       });
     }
-    
+
     const result = await cacheManager.revalidatePath(path);
     res.json(result);
   } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });
@@ -29,8 +29,8 @@ router.get('/stats', async (req, res) => {
     const stats = await cacheManager.getStats();
     res.json(stats);
   } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });
@@ -41,8 +41,8 @@ router.delete('/', async (req, res) => {
     const result = await cacheManager.clearAll();
     res.json(result);
   } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });
@@ -51,23 +51,23 @@ router.delete('/', async (req, res) => {
 router.get('/entry', async (req, res) => {
   try {
     const { url, method = 'GET' } = req.query;
-    
+
     if (!url) {
-      return res.status(400).json({ 
-        error: 'URL parameter is required' 
+      return res.status(400).json({
+        error: 'URL parameter is required'
       });
     }
-    
+
     const exists = await cacheManager.exists(url, method);
-    res.json({ 
+    res.json({
       url,
       method,
       exists,
       normalizedUrl: cacheManager.normalizeUrl(url)
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });
@@ -78,8 +78,8 @@ router.post('/cleanup', async (req, res) => {
     const result = await cacheManager.cleanup(req.body);
     res.json(result);
   } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });

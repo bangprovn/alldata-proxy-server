@@ -8,25 +8,25 @@ const router = Router();
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-    
+
     if (!email || !password) {
-      return res.status(400).json({ 
-        success: false, 
-        error: 'Email and password are required' 
+      return res.status(400).json({
+        success: false,
+        error: 'Email and password are required'
       });
     }
-    
+
     const tempAuthManager = new AuthManager(email, password);
     const token = await tempAuthManager.login();
-    
-    res.json({ 
-      success: true, 
-      accessToken: token 
+
+    res.json({
+      success: true,
+      accessToken: token
     });
   } catch (error) {
-    res.status(401).json({ 
-      success: false, 
-      error: error.message 
+    res.status(401).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -35,14 +35,14 @@ router.post('/login', async (req, res) => {
 router.post('/refresh', async (req, res) => {
   try {
     const token = await authManager.refreshToken();
-    res.json({ 
-      success: true, 
-      accessToken: token 
+    res.json({
+      success: true,
+      accessToken: token
     });
   } catch (error) {
-    res.status(401).json({ 
-      success: false, 
-      error: error.message 
+    res.status(401).json({
+      success: false,
+      error: error.message
     });
   }
 });
@@ -52,7 +52,7 @@ router.get('/test-token', async (req, res) => {
   try {
     const accessToken = await authManager.getValidToken();
     const axios = (await import('axios')).default;
-    
+
     const response = await axios.get('https://data-eu.partnership.workshopdiag.com/', {
       headers: {
         'Cookie': `accessToken=${accessToken}`,
@@ -62,7 +62,7 @@ router.get('/test-token', async (req, res) => {
       },
       validateStatus: () => true
     });
-    
+
     res.json({
       tokenValid: response.status === 200,
       status: response.status,
@@ -71,8 +71,8 @@ router.get('/test-token', async (req, res) => {
       dataLength: response.data ? response.data.length : 0
     });
   } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
+    res.status(500).json({
+      error: error.message
     });
   }
 });

@@ -46,7 +46,7 @@ export async function cacheMiddleware(req, res, next) {
 })();
 
 function isApiRequest(req) {
-  return req.headers['content-type']?.includes('application/json') || 
+  return req.headers['content-type']?.includes('application/json') ||
          req.headers['accept']?.includes('application/json') ||
          req.originalUrl.includes('/api/') ||
          req.originalUrl.includes('/alldata/');
